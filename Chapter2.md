@@ -332,3 +332,238 @@
         ```
 
 - **Graph-Like Data Models:**
+
+  - When your data has more one-to-many relationships or no relationships your goto data model should be _Document model_.
+  - But if your data mas too many many-to-many relationships than usual then using relation data model will be alot more complex, then it beomes more natural to start using **Graph Data Models**.
+  - Graph consists of two kinds of objects:
+    - _Vertices_ also known as _nodes_ or _entities_.
+    - _Edges_ also known as _relations_ or _arc_.
+  - You might think that all the vertices in graph will represent the same kind of data. However, graphs are not limited to such _homogeneous_ data.
+  - They are equally powerful to use graphs to provide a consistent way of storing completely different tyeps of objects in single datastore.
+  - Example to understand how this works:
+    - Facebook maintains a asingle graph with many different types of vertices and edges: vertices represent people, locations, events, checkin, and comments made by users; edges indicate which people are friends with each other, which checkin happended in which location, who commented on which post, who attended which event, ans so on.
+  - Example of graph-structure data: ![Example of graph-structure data](imgs/graph_model_example.png)
+  - **_Property Graphs_**:
+
+    - Several different ways of structuring and querying data in graphs. One of them is _Property Graphs_.
+    - Here each vertex consists of: Unique identifier; Set of outgoing edges; Set of incoming edges; Collection of properties (key-value pairs)
+    - Each edge consists of: Unique identifier; Tail Vertex (vertex at which the edge starts); Head Vertex (vertex at which the edge ends); Label to describe relation between two vertices; Collection of properties (key-value pairs).
+    - We can use two relational table to represent a property graphs:
+
+      ```SQL
+      CREATE TABLE vertices(
+        vertex_id integer PRIMARY KEY,
+        properties json
+      );
+
+      CREATE TABLE edges(
+        edges_id integer PRIMARY KEY,
+        tail_vertex integer REFERENCES vertices (vertex_id),
+        head_vertes integer REFERENCES vertices (vertex_id),
+        label text,
+        properties json
+      );
+
+      CREATE INDEX edges_tails ON edges (tail_vertex);
+      CREATE INDEX edges_heads ON edges (head_vertex);
+      ```
+
+    - Important aspects of this model are:
+      1. Any vertex can have an edge connecting it with other vertex. No schema that restrict which kind of data can or cannot be associated.
+      2. Given any vertex, you can efficiently find both its incoming and its outgoing edges, and thus _traverse_ the graph.
+      3. By using different labels for different kinds of relationships, you can store several different kinds of information in a single graphs.
+
+  - **_Cypher Query Language_**:
+    - _Cypher_ is a declarative query language for property graphs. (Fun fact: This langauge is named after character from movie _The Matrix_)
+    - Example of Cypher Query:
+      ```SQL
+      CREATE
+        (Asia: Location {name: 'Asia', type:'continent'}), -- VERTEX
+        (India: Location {name: 'India', type:'country'}), -- VERTEX
+        (Ahmedabad: Location {name: 'Gujarat', type:'state'}), -- VERTEX
+        (Namra: Person {name: 'Namra'}), -- VERTEX
+        (Ahmedabad) - [:WITHIN]-> (India) -[:WITHIN]-> (Asia), -- EDGE
+        (Namra) -[:BORN_IN]-> (Ahmedabad) -- EDGE
+      ```
+    - Below codes shows how to express the query in Cypher.
+      ```SQL
+      MATCH
+        (person) -[:BORN_IN]-> () -[:WITHIN*0..]-> (in:Location {name:'India'}),
+        (person) -[:LIVES_IN]-> () -[:WITHIN*0..]-> (us:Location {name:'United States'})
+      RETURN person.name
+      ```
+    - This query finds any vertex aka `person` that meets tthe both of the following condition:
+      1. `person` has an outgoing `BORN_IN` edge to some vertex. From that vertex, follow chain of outgoing `WITHIN` edge util eventually reaches vertex with properties `type: Location` and `name: India`.
+      2. Samer `person` also has an outgoing `LIVES_IN` edge. Following that edge chain of outgoing `WITHIN` edge util eventually reaches vertex with properties `type: Location` and `name: United States`.
+  - **_Graph Queries in SQL_**:
+
+    - We saw how an graph data can be represeted in a relational database.
+    - But then it is very difficult to query the relation database. Becuase in relation database, we know in advance which joins needs in query.
+    - In graph model we traverse variable number of edges before we find the vertex you're looking for, i.e. number of joins is not fixed in advance.
+    - In our example where we search `person` who is `BORN_IN` in India and `LIVES_IN` in United States. We will use _recursive common table expressions_ to obtain the same results.
+
+      ```SQL
+      WITH RECURSIVE
+
+        -- STEP-1
+        in_ind(vertex_id) AS (
+          SELECT vertex_id FROM vertices WHERE properties->>'name' = 'India'
+        UNION
+          SELECT edges.tail_vertex FROM edges
+            JOIN in_ind ON edges.head_vertex = in_ind.vertex_id
+            WHERE edges.label = 'within'
+        ),
+
+      -- STEP-2
+        in_usa(vertex_id) AS (
+          SELECT vertex_id FROM vertices WHERE properties->>'name' = 'United States'
+        UNION
+          SELECT edges.tail_vertex FROM edges
+            JOIN in_usa ON edges.head_vertex = in_usa.vertex_id
+            WHERE edges.label = 'within'
+        ),
+
+        -- STEP-3
+        born_in_ind(vertex_id) AS (
+          SELECT edges.tail_vertex FROM edges
+            JOIN in_ind on edges.head_vertex = in_ind.vertex_id
+            WHERE edges.label = 'born_in'
+        ),
+
+        -- STEP-4
+        lives_in_usa(vertex_id) AS (
+          SELECT edges.tail_vertex FROM edges
+            JOIN in_usa on edges.head_vertex = in_usa.vertex_id
+            WHERE edges.label = 'lives_in'
+        ),
+
+        -- STEP-5
+        SELECT vertices.properties->>'name'
+        FROM vertices
+        JOIN born_in_ind ON vertices.vertex_id = born_in_ind.vertex_id
+        JOIN lives_in_usa ON vertices.vertex_id = lives_in_usa.vertex_id;
+      ```
+
+    - Understand SQL query:
+      1. Creates a recursive Common Table Expression (CTE) called `in_ind` that first finds the `vertex_id` for India and then recursively finds all vertices that are within India.
+      2. Similarly creates another recursive CTE called `in_usa` that identifies the `vertex_id` for the United States and then recursively finds all vertices that are within the United States.
+      3. Creates a CTE called `born_in_ind` that finds all people (vertices) who were born in India or any place within India by joining with the previously defined `in_ind` CTE.
+      4. Creates a CTE called `lives_in_usa` that finds all people (vertices) who live in the United States or any place within the United States by joining with the previously defined `in_usa` CTE.
+      5. Selects the names of all people who were both born in India (or a place within India) and live in the United States (or a place within the United States) by joining the vertices table with both the `born_in_ind` and `lives_in_usa` CTEs.
+
+  - **_Triple-Stores and SPARQL_**:
+
+    - Mostly equivalent to the property graph model.
+    - Here all the information is stored in three part statement: (_subject, predicate, object_). For example, _Namra (subject), likes(predicate), Mango(object)_
+    - Subject of triple is same as vertex in graph. But, an object can be:
+      1. Value of a primitive datatype. For example, (_Namra, age, 22_) is like `Namra` vertex with property `{ "age": 22 }`.
+      2. Another vertex in the graph. For example, (_Namra, lives, Ahmedabad_), here subject and object `Namra` and `Ahmedabad` both are vertex, and the predicate `lives` is the label of the edge.
+    - Data written in triples:
+      ```
+      _:namra a :Person
+      _:namra :name "Namra"
+      _:namra :bornIn _:gujarat
+      _:gujarat a :Location
+      _:gujarat :name "Gujarat"
+      _:gujarat :type "state"
+      _:gujarat :within _:india
+      _:india a :Location
+      _:india :name "India"
+      _:india :type "country"
+      ```
+    - Concise way to write triples:
+      ```
+      _:namra a :Person; :name "Namra"; :bornIn _:gujarat
+      _:gujarat a :Location; :name "Gujarat"; :type "state"; :within _:india
+      _:india a :Location; :name "India"; :type "country"
+      ```
+    - **The semantic web:**
+      - Many people think triples and semantic web are the same thing. But, triple-store data model is completely independent of the semantic web. So, a brief discussion is needed.
+      - _Semantic web_ is a fundamentallly a simple and resonable idea: instead publish information in text and picture why don't they also publish in machine-readable data.
+      - _Resource Description Framework (RDF)_: a mechanism for different website to publish data in a consistent format, allowing data from different website to be automattically combined into a _web of data_.
+    - **The RDF data model:**
+
+      - RDF is written in an XML format, does the same thing but more verbose.
+      - Example:
+
+        ```XML
+        <rdf:RDF xmlns="urn:example:" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+
+          <Location rdf:nodeID="gujarat">
+            <name>Gujarat</name>
+            <type>state</type>
+            <within>
+              <Location rdf:nodeID="india">
+                <name>India</name>
+                <type>country</type>
+              </Location>
+            </within>
+          </Location>
+
+          <Person rdf:nodeID="namra">
+            <name>Namra</name>
+            <bornIn rdf:nodeID="gujarat"/>
+          </Person>
+        </rdf:RDF>
+        ```
+
+      - RDF has a few quirks due to its design:
+        - The subject, predicate, and object of a triple are often URIs.
+        - For example, a predicate might be an URI such as `<http://my-company.com/namespace#within>` or `<http://my-company.com/namespace#lives_in>`, rather than just `WITHIN` or `LIVES _ IN`.
+      - This is designed so that you should be able to combine your data with someone else’s data, and if attach a different meaning to the word `within` or `lives_` in, you won’t get conflict because their predicates are `<http://other.org/foo#within>` & `<http://other.org/foo#lives_in>`.
+
+    - **The SPARQL query language:**
+
+      - _SPARQL_ is a query language for triple-store using RDF data model.
+      - For example, query for finding person born in India and lives in United States looks like:
+
+        ```SQL
+        PREFIX: <urn:example>
+
+        SELECT ?personName WHERE {
+          ?person :name ?personName
+          ?person :bornIn / :within / :name "India"
+          ?person :livesIn / :within / :name "United States"
+        }
+        ```
+
+      - Structure is very similar with Cypher. For example:
+        `(person) -[:BORN_IN] -> () -[:WITHIN*0..] -> (location)` # Cypher <br>
+        `?person :bornIn / :within* ?location` # SPARQL
+
+  - **_The Foundation: Datalog_**:
+
+    - _DataLog's_ data model is similar to triple-store model. Instead of _(subject, predicate, object)_, here it is written as _predicate(subject, object)_.
+    - For example:
+
+      ```
+      name(india, 'India')
+      type(india, country)
+
+      name(gujarat, 'Gujarat')
+      type(gujarat, state)
+      within(gujarat, india)
+
+      name(namra, 'Namra')
+      born_in(namra, gujarat)
+      ```
+
+    - Now if we see query to find person born in India and lives in United States:
+
+      ```
+      within_recursive(Location, Name) :- name(Location, Name).          \* RUlE 1 *\
+
+      within_recursive(Location, Name) :- name(Location, Via),           \* RUlE 2 *\
+                                          within_recursive(Via, Name)
+
+      migrated(Name, BornIn, LivesIn) :- name(Person, Name),             \* RUlE 2 *\
+                                         born_in(Person, BornLoc),
+                                         within_recursize(BornLoc, BornIn),
+                                         lives_in(Person, LivesLoc),
+                                         within_recursize(LivesLoc, LivesIn).
+
+      ? - migrated(Who, 'India', 'United states')
+      /* Who = 'Namra' */
+      ```
+
+    - Cypher and SPARQL direct jump to `SELECT` query. Here, we define _rules_ that tell the database about new predicates aka `within_recursive` & `migrated`.

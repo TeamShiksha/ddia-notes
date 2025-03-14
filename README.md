@@ -1,5 +1,8 @@
 # Team.Shiksha DDIA Book Cohort
 
-### [Chapter 1](./Chapter1.md)
+## Table of Contents
 
-### [Chapter 2](./Chapter2.md)
+- [Chapter 1](./Chapter1.md)
+- [Chapter 2](./Chapter2.md)
+- [Chapter 3](./Chapter3.md)
+- [Homeworks](./Homeworks.md)
